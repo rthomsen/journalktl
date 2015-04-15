@@ -274,12 +274,25 @@ QString MainWindow::getCurrentBootID()
     const void *data;
     size_t length;
     r = sd_journal_seek_tail(journal);
+    if (r < 0)
+    {
+      qDebug() << "Failed to seek tail";
+      return QString();
+    }
     r = sd_journal_previous(journal);
+    if (r < 1)
+    {
+      qDebug() << "Failed to go to previous";
+      return QString();
+    }
     r = sd_journal_get_data(journal, "_BOOT_ID", &data, &length);
     QString curBoot = QString::fromLatin1((const char *)data, length).section("=",1);
     sd_journal_close(journal);
     //qDebug() << "Current boot ID is: " << curBoot;
-    return curBoot;
+    if (r == 0)
+      return curBoot;
+    else
+      return QString();
   }
   qDebug() << "Failed to open journal!";
   return QString();
@@ -465,7 +478,7 @@ void MainWindow::getBootIDsFinished()
 {
   // Gets called when reading bootIDs is done
 
-  // qDebug() << "Finished getting boot IDs: " << timeGetBootIds->elapsed() << "ms";
+  //qDebug() << "Finished getting boot IDs.";
   populateBootIDs();
   ui.cmbBootIDs->setEnabled(true);
 }
@@ -475,11 +488,14 @@ void MainWindow::readJournalFinished()
   // Gets called when journal entries have been read
 
   //qDebug() << "listEntries is before:" << listEntries.size();
-  ui.tblLog->setUpdatesEnabled(false);
-  jrnlModel->beginInsertRows(QModelIndex(), listEntries.size(), listEntries.size()+futureReadJournal.result().size()-1);
-  listEntries = futureReadJournal.result();
-  jrnlModel->endInsertRows();
-  ui.tblLog->setUpdatesEnabled(true);
+  if (futureReadJournal.result().size() > 0)
+  {
+    ui.tblLog->setUpdatesEnabled(false);
+    jrnlModel->beginInsertRows(QModelIndex(), listEntries.size(), listEntries.size()+futureReadJournal.result().size()-1);
+    listEntries = futureReadJournal.result();
+    jrnlModel->endInsertRows();
+    ui.tblLog->setUpdatesEnabled(true);
+  }
   //qDebug() << "listEntries is after:" << listEntries.size();
 
   qDebug() << "Done getting entries (" << listEntries.size() << "entries, time:" << timePopModel->elapsed() << "ms)";
