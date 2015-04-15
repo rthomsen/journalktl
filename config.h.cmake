@@ -1,0 +1,6 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#define JOURNALKTL_VERSION "@JOURNALKTL_VERSION@"
+
+#endif
