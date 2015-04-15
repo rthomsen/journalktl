@@ -445,6 +445,11 @@ void MainWindow::btnLoadClicked()
   listEntries.clear();
   jrnlModel->endRemoveRows();
 
+  if (currentFilter.isEmpty())
+  {
+    updateStats();
+    return;
+  }
 
   lblStats->setText("");
   lblProcess->setText("Reading entries...");
