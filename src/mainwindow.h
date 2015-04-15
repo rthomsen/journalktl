@@ -76,7 +76,6 @@ private:
   QStringList jrnlBootIDs, currentFilter;
 
   // Functions
-  QString getCurrentBootID();
   void getBootIDs();
   void populateBootIDs();
   void populatePrio();
@@ -88,7 +87,6 @@ private slots:
   void cmbPriorityChanged(QStandardItem*);
   void leSearchChanged(QString);
   void btnLoadClicked();
-  void getBootIDsFinished();
   void readJournalFinished();
   void readJournalNewFinished();
   void journalChanged(int);

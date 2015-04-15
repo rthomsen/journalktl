@@ -60,11 +60,12 @@ MainWindow::MainWindow() : KXmlGuiWindow(0)
   ui.tblLog->setModel(sortFilterModel);
   ui.tblLog->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
-  // Find current boot
-  currentBootID = getCurrentBootID();
-  currentFilter << QString("_BOOT_ID=" + currentBootID);
+  // Fetch bootIDs
+  getBootIDs();
+  populateBootIDs();
 
-  // Read journal entries in another thread
+  // Read journal entries from current boot in another thread
+  currentFilter << QString("_BOOT_ID=" + currentBootID);
   qRegisterMetaType<jrnlEntry>("jrnlEntry");
   timePopModel = new QElapsedTimer;
   timePopModel->start();
@@ -74,12 +75,6 @@ MainWindow::MainWindow() : KXmlGuiWindow(0)
   char * ptr = NULL;
   futureReadJournal = QtConcurrent::run(this, &MainWindow::readJournal, currentFilter, ptr);
   watchReadJournal->setFuture(futureReadJournal);
-
-  // Get all bootIDs in another thread
-  QFutureWatcher<void> *watchReadBootIDs = new QFutureWatcher<void>();
-  connect(watchReadBootIDs, SIGNAL(finished()), this, SLOT(getBootIDsFinished()));
-  QFuture<void> futureReadBootIDs = QtConcurrent::run(this, &MainWindow::getBootIDs);
-  watchReadBootIDs->setFuture(futureReadBootIDs);
 
   // Connect signals and slots
   connect(ui.btnLoad, SIGNAL(clicked()), this, SLOT(btnLoadClicked()));
@@ -261,48 +256,15 @@ void MainWindow::populatePrio()
   }
 }
 
-QString MainWindow::getCurrentBootID()
-{
-  // Gets the most recent bootID. This is used for
-  // building the initial model.
-
-  int r;
-  sd_journal *journal;
-  r = sd_journal_open(&journal, jflags);
-  if (r == 0)
-  {
-    const void *data;
-    size_t length;
-    r = sd_journal_seek_tail(journal);
-    if (r < 0)
-    {
-      qDebug() << "Failed to seek tail";
-      return QString();
-    }
-    r = sd_journal_previous(journal);
-    if (r < 1)
-    {
-      qDebug() << "Failed to go to previous";
-      return QString();
-    }
-    r = sd_journal_get_data(journal, "_BOOT_ID", &data, &length);
-    QString curBoot = QString::fromLatin1((const char *)data, length).section("=",1);
-    sd_journal_close(journal);
-    //qDebug() << "Current boot ID is: " << curBoot;
-    if (r == 0)
-      return curBoot;
-    else
-      return QString();
-  }
-  qDebug() << "Failed to open journal!";
-  return QString();
-}
-
 void MainWindow::getBootIDs()
 {
   // Fetches a list of all bootIDs in the journal.
   // This is used to build the model for bootID combobox.
-  // Runs on a different thread.
+
+  QElapsedTimer *timer = new QElapsedTimer;
+  timer->start();
+
+  jrnlBootIDs.clear();
 
   int count = 0;
   int r;
@@ -312,10 +274,12 @@ void MainWindow::getBootIDs()
   {  
     const void *data;
     size_t length;
+
+    // Get all unique bootIDs, the order is not defined!
     r = sd_journal_query_unique(journal, "_BOOT_ID");
     SD_JOURNAL_FOREACH_UNIQUE(journal, data, length)
     {
-      // qDebug() << "Found: " << QString::fromLatin1((const char *)data, length).section("=",1);
+      //qDebug() << "Found bootID: " << QString::fromLatin1((const char *)data, length).section("=",1);
       jrnlBootIDs.append(QString::fromLatin1((const char *)data, length).section("=",1));
       count++;
     }
@@ -328,7 +292,6 @@ void MainWindow::getBootIDs()
 void MainWindow::populateBootIDs()
 {
   // Populates the bootID combobox by iterating through jrnlBootIDs.
-  // This slot gets called after getBootIDs() is done.
 
   bootModel = new QStandardItemModel(jrnlBootIDs.size(), 1);
   bootSortModel = new QSortFilterProxyModel(this);
@@ -340,8 +303,13 @@ void MainWindow::populateBootIDs()
   QDateTime date;
   sd_journal *journal;
   r = sd_journal_open(&journal, jflags);
+  if (r < 0)
+  {
+    qDebug() << "Failed to open journal!";
+    return;
+  }
 
-  // We iterate over the boot IDs:
+  // We iterate over the boot IDs and get dates:
   for (int i = 0; i < jrnlBootIDs.size(); ++i)
   {
     // Flush previous journal filters
@@ -368,41 +336,43 @@ void MainWindow::populateBootIDs()
     if (r == 0)
     {
       date.setMSecsSinceEpoch(time/1000);
-      // itemText = QString(QString::number(i+1) + ": " + date.toString("yyyy.MM.dd"));
       itemText = QString(date.toString("yyyy.MM.dd"));
     }
 
     QStandardItem* item;
     item = new QStandardItem(itemText);
-    // Set the UserRole to the bootID
+
+    // Set the UserRole to bootID and UserRole+1 to date
     item->setData(jrnlBootIDs.at(i), Qt::UserRole);
     item->setData(date.toString("yyyy.MM.dd hh:mm:ss"), Qt::UserRole+1);
+
+    // Enable checkboxes
     item->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+    item->setData(Qt::Unchecked, Qt::CheckStateRole);
 
-    // Select only the current bootID
-    // if (i == jrnlBootIDs.size()-1)
-    if (jrnlBootIDs[i] == currentBootID)
-      item->setData(Qt::Checked, Qt::CheckStateRole);
-    else
-      item->setData(Qt::Unchecked, Qt::CheckStateRole);
-
-    // Add the item to the model (in reverse order):
+    // Add the item to the model (in reverse order)
     bootModel->setItem(jrnlBootIDs.size()-1-i, 0, item);
 
   }
   sd_journal_close(journal);
 
+  // Sort according to date
   bootSortModel->setSortRole(Qt::UserRole+1);
   bootSortModel->sort(0, Qt::DescendingOrder);
+
+
   int j = 0;
   for (int i = bootSortModel->rowCount() - 1; i >= 0; i--)
   {
-    // qDebug() << "loop: " << i << "( " << bootSortModel->data(bootSortModel->index(j, 0)).toString() << ")";
     QString txt = QString(bootSortModel->data(bootSortModel->index(j, 0)).toString() + " (" + QString::number(i+1) + ")");
     bootSortModel->setData(bootSortModel->index(j, 0), txt);
     j++;
   }
   ui.cmbBootIDs->setCurrentIndex(0);
+
+  // Set currentBootID and check it
+  currentBootID = bootSortModel->data(bootSortModel->index(0, 0), Qt::UserRole).toString();
+  bootModel->itemFromIndex(bootSortModel->mapToSource(bootSortModel->index(0,0)))->setCheckState(Qt::Checked);
 }
 
 void MainWindow::cmbPriorityChanged(QStandardItem* item)
@@ -479,15 +449,6 @@ void MainWindow::leSearchChanged(QString searchTxt)
   qDebug() << "invalidate after unit/msg filter" << timer->elapsed() << "ms";
 
   updateStats();
-}
-
-void MainWindow::getBootIDsFinished()
-{
-  // Gets called when reading bootIDs is done
-
-  //qDebug() << "Finished getting boot IDs.";
-  populateBootIDs();
-  ui.cmbBootIDs->setEnabled(true);
 }
 
 void MainWindow::readJournalFinished()
