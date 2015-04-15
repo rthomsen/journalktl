@@ -359,6 +359,8 @@ void MainWindow::populateBootIDs()
     if (r < 0)
       qDebug() << "Failed to seek head";
     r = sd_journal_next(journal);
+    if (r < 1)
+      qDebug() << "Failed to go to next entry";
 
     // Get the date for this entry
     uint64_t time;
